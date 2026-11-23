@@ -1,63 +1,195 @@
 # AWAZ 2.0
 
-AWAZ is a multilingual communication workspace for text translation, browser speech, image text extraction, interpreted calls and turn based interpreting. It has no login, signup, profile or account system.
+**A multilingual communication workspace for conversations, translation, and speaking practice.**
 
-> **Product line:** Breaking language barriers. Connecting people through intelligence.
+AWAZ lets people translate text and speech, interpret turn based conversations, translate text found in images, and hold voice or video meetings with translated captions and speech. It is a browser app with a React frontend and an Express backend. There is no sign in or account system.
 
-## What is in this build
+> Breaking language barriers. Connecting people through intelligence.
 
-- **Translate:** text translation, language swap, 25 language choices, browser speech recognition and speech playback. Speech is buffered until you stop listening, then translated as one turn. Translation runs through a backend provider; failures are shown as errors and are never replaced with invented text.
-- **Live conversation:** two configurable speakers take turns. Each complete turn is recognized in the browser, translated by the backend and optionally played aloud.
-- **Vision:** upload an image or capture one with the camera, run OCR in the browser, edit the extracted text and translate it. OCR confidence comes from Tesseract; it is not translation confidence.
-- **Speak:** practice a phrase using device speech synthesis and compare the browser's transcript with the reference text; it does not score pronunciation.
-- **Translation review:** optionally checks quantities, dates, currency, units, omissions and meaning, with a back-translation comparison. Results are review hints and are never marked verified.
-- **Mixed-language translation:** optionally labels code-switched words and phrases with script, language, transliteration and meaning, then applies a natural translation. If AI analysis is unavailable, the regular translator and approximate script grouping remain available.
-- **Meetings:** create voice or video rooms for two people, or a conference room for up to six. Each speaker selects a language and finishes a speech turn before it is translated; optional pause detection can finish turns hands free. Calls include mic/camera controls and a live network quality estimate. Review and save recap notes locally when you choose.
-- **Voice frequency meter:** while the microphone is active, view its local audio spectrum, strongest measured frequency and level. Audio is not recorded or included in Insights.
-- **History and insights:** successful translations save in this browser automatically. Insights chart saved translation frequency by day and local hour, alongside actual practice attempts. History is not disabled in Settings.
-- **Settings:** choose providers, manage a browser-only translation glossary, and tune voice speed, text size, contrast and motion.
-- **Service foundation:** modular translation adapters, provider fallback, input limits, request throttling, health reporting, CORS, security headers, WebSocket meeting signaling and local translation history.
+## Contents
 
-Meeting transcripts pass through the AWAZ backend for room delivery and translation; call audio/video use peer-to-peer WebRTC. Browser speech recognition may use the browser provider, and translated voice is synthesized on each listener's device.
+- [What AWAZ can do](#what-awaz-can-do)
+- [How the project works](#how-the-project-works)
+- [Architecture](#architecture)
+- [Data and privacy](#data-and-privacy)
+- [Run AWAZ locally](#run-awaz-locally)
+- [Configuration](#configuration)
+- [API overview](#api-overview)
+- [Build, checks, and deployment](#build-checks-and-deployment)
+- [Project structure](#project-structure)
+- [Known limits](#known-limits)
+- [More documentation](#more-documentation)
 
-AWAZ does not currently ship offline machine translation or downloadable speech packs. OCR uses browser side Tesseract.js and may download recognition data on first use.
+## What AWAZ can do
 
-## Architecture assessment
+| Workspace | What it does |
+| --- | --- |
+| **Translate** | Translate typed text or a completed speech turn. Choose source and target languages, swap them, play the result aloud, and optionally review a translation or inspect mixed-language text. Successful translations are saved automatically in local browser history. |
+| **Live** | Let two people take turns speaking in different languages. AWAZ recognizes each turn in the browser, translates it, and can read the translation aloud. |
+| **Vision** | Capture or upload an image, recognize text in the browser with Tesseract.js, edit the result, and translate it. The image itself is not uploaded to the AWAZ backend. |
+| **Speak** | Hear a sample phrase, record yourself, and compare the browser's transcript with the phrase. This checks text matching; it is not a pronunciation score. |
+| **Meetings** | Start or join a voice or video room for two people, or a conference room for up to six. Each listener chooses the language they want to hear. Meetings include captions, translated speech, mic and camera controls, connection quality, and an optional recap you can save on your device. |
+| **History** | Browse, copy, export, or delete translations saved in this browser. |
+| **Insights** | View saved translations by day, local time, language, and recent activity, along with speaking practice attempts. |
+| **Settings** | Choose the translation provider and default context, manage a personal glossary, and adjust voice speed, text size, contrast, and motion. |
 
-The project uses React 19/Vite, an Express API, Web Speech and Tesseract hooks, multiple translation adapters, WebSocket meeting signaling, WebRTC calls and a Mongoose translation model. Translation failures are shown to the user, history stays in browser storage, and MongoDB outages do not prevent backend startup.
+The app offers 25 language choices. Actual language coverage and quality depend on the selected translation provider.
 
-The upgraded app keeps the existing stack and adapters. Translation requests go through Express; credentials remain server side. Translation and practice history are saved in browser storage. Meeting rooms use eight-character invite codes and are not account authenticated. No accounts are created.
+## How the project works
+
+### Text and speech translation
+
+1. The user types text or starts speech recognition from the Translate workspace.
+2. For speech, the browser's speech recognition API collects a turn. AWAZ waits for the final transcript when the user stops listening.
+3. The frontend sends the text and language pair to the backend using `POST /translate`.
+4. The backend validates the request, selects the configured provider adapter, and tries configured fallbacks if needed.
+5. The translated text returns to the browser. On success, AWAZ saves the translation locally and displays it in History and Insights.
+6. If translation fails, AWAZ shows an error instead of inventing a result.
 
 ```mermaid
 flowchart LR
-  Browser[React + Vite workspace]
-  Speech[Browser speech recognition / synthesis]
-  OCR[Tesseract.js in browser]
-  API[Express REST + WebSocket API]
-  Orchestrator[Translation adapter router + fallback]
-  Providers[FreeGoogle / LibreTranslate / Google / DeepL / OpenAI]
-  Mongo[(Optional legacy history API)]
-  Local[(Local and session browser storage)]
-  Browser --> Speech
-  Browser --> OCR
-  Browser --> API
-  Browser --> Local
-  API --> Orchestrator
-  Orchestrator --> Providers
-  API -. legacy opted-in requests .-> Mongo
+  Person[User] --> Input[Type text or speak]
+  Input -->|speech turn| Recognition[Browser speech recognition]
+  Recognition -->|final transcript| UI[React workspace]
+  Input -->|typed text| UI
+  UI -->|text and language pair| API[Express POST /translate]
+  API --> Validate[Validate input and settings]
+  Validate --> Router[Translation adapter router]
+  Router --> Provider[Configured translation provider]
+  Router -. configured fallback .-> Fallback[Fallback provider]
+  Provider -->|translated text| UI
+  Fallback -->|translated text| UI
+  UI -->|successful result| Local[Browser localStorage]
+  Local --> History[History and Insights]
+  API -->|provider error| Error[Show actionable error]
 ```
 
-See [AI_FEATURE_INTEGRATION_PLAN.md](AI_FEATURE_INTEGRATION_PLAN.md), [ARCHITECTURE.md](ARCHITECTURE.md), [AI_ENGINE.md](AI_ENGINE.md), [API_DOCUMENTATION.md](API_DOCUMENTATION.md), [PRIVACY.md](PRIVACY.md), [DEPLOYMENT.md](DEPLOYMENT.md), [DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md) and [ROADMAP.md](ROADMAP.md) for the implementation details and limits.
+Translation review and mixed-language analysis are optional features on the Translate page. They use optional backend AI routes when configured; they do not replace the standard translation request.
 
-## Requirements
+### Meeting calls and interpreted speech
 
-- Node.js **20.19+** (the Vite 8 frontend and Mongoose 9 backend require a modern Node runtime)
-- npm
-- MongoDB is optional; browser history needs no database
+1. A person creates a room or joins with a room code and chooses voice, video, or conference mode.
+2. The backend keeps room membership and relays WebRTC setup messages over `/ws`.
+3. Browsers establish peer-to-peer WebRTC connections for call audio and video.
+4. Each speaker's browser recognizes a completed speech turn and sends its transcript text through the meeting WebSocket.
+5. The backend relays that text to the other room members. Each listener translates it into their selected language, displays captions, and can hear browser-synthesized speech.
+6. Successful translated turns are saved in each listener's local translation history. Meeting recap notes are saved only when the user reviews and saves them.
 
-## Run locally
+```mermaid
+flowchart TB
+  Join[Create or join room] --> Room[Backend room coordination over WebSocket]
+  Room --> Signaling[Exchange room membership, SDP, and ICE]
+  Signaling --> Peer[Peer-to-peer WebRTC call]
+  Mic[Speaker microphone] --> Speech[Speech recognition in speaker browser]
+  Speech -->|completed transcript text| Room
+  Room -->|transcript text| Listener[Each other participant]
+  Listener --> Translate[Translate for listener language]
+  Translate --> Captions[Captions and local history]
+  Translate --> Voice[Speech synthesis in listener browser]
+  Cam[Camera and microphone media] --> Peer
+  Peer -->|media streams| Remote[Other participant browsers]
+```
 
-In one terminal, configure and start the backend:
+The meeting server carries signaling and transcript text, not audio or video frames. Rooms are temporary and kept in backend memory while participants are connected. Meeting codes are invite codes, not account authentication.
+
+### Image translation
+
+```mermaid
+flowchart LR
+  Image[Camera capture or selected image] --> OCR[Tesseract.js in browser]
+  OCR --> Editable[Review and edit recognized text]
+  Editable --> Translate[Backend translation service]
+  Translate --> Result[Translation result and local history]
+```
+
+## Architecture
+
+AWAZ uses a browser frontend for the workspace and device features, and a backend for translation providers, API validation, and meeting coordination.
+
+```mermaid
+flowchart TB
+  subgraph Browser["Browser: React 19 and Vite"]
+    UI[Hash-routed workspace]
+    Speech[Web Speech recognition and synthesis]
+    OCR[Tesseract.js OCR]
+    WebRTC[WebRTC call media]
+    Storage[localStorage and sessionStorage]
+    UI --> Speech
+    UI --> OCR
+    UI --> WebRTC
+    UI <--> Storage
+  end
+
+  subgraph Backend["Node.js and Express backend"]
+    REST[REST API]
+    Translate[Translation route and validation]
+    Adapters[Translation adapter router]
+    WS[WebSocket room and signaling handler]
+    AI[Optional AI feature routes]
+    CloudHistory[Optional cloud history route]
+    REST --> Translate
+    Translate --> Adapters
+    REST --> AI
+    REST --> CloudHistory
+  end
+
+  Providers[FreeGoogle, LibreTranslate, Google Cloud, DeepL, OpenAI]
+  Mongo[(Optional MongoDB)]
+  OtherBrowser[Other meeting participant browsers]
+
+  UI -->|HTTP requests| REST
+  Adapters -->|provider request| Providers
+  CloudHistory -. explicit cloud-history request .-> Mongo
+  UI <-->|room signaling and transcript text| WS
+  WS <-->|room signaling and transcript text| OtherBrowser
+  WebRTC <-->|peer-to-peer audio and video| OtherBrowser
+```
+
+### Main technology
+
+- **Frontend:** React 19, Vite 8, React Router hash navigation, and Lucide icons.
+- **Backend:** Node.js 20.19+, Express 4, WebSocket, Helmet, CORS, and rate limiting.
+- **Translation:** provider adapters for FreeGoogle, LibreTranslate, Google Cloud Translation, DeepL, and OpenAI, with configurable fallback order.
+- **Speech:** browser Web Speech APIs for recognition and speech synthesis.
+- **Image text:** Tesseract.js running in the browser.
+- **Calls:** WebRTC for peer media; backend WebSocket for room membership, signaling, and completed transcript relay.
+- **Storage:** browser storage for everyday preferences, translations, glossary entries, practice attempts, and saved meeting recaps. MongoDB is optional and only used for explicit cloud-history API requests.
+
+### Backend request flow
+
+- `GET /health` reports backend and database status.
+- `GET /languages` returns the language catalog.
+- `POST /translate` validates and translates text through the selected provider.
+- `GET /meeting/ice` returns STUN and configured short-lived TURN connection settings.
+- `/ws` coordinates meeting rooms and relays signaling and transcript text.
+- `/ai/*` contains optional AI routes for translation review, mixed-language analysis, and audio workflows.
+- `/history` supports the optional legacy cloud-history API. The normal workspace history is local to the browser.
+
+## Data and privacy
+
+| Data | Where AWAZ keeps or processes it |
+| --- | --- |
+| Translation history | Automatically saved in this browser's localStorage, up to 500 entries. Clear it from History at any time. |
+| Preferences and glossary | Saved in this browser's localStorage. |
+| Speaking practice attempts | Saved locally and used by Insights. |
+| Meeting recap notes | Saved locally only after review and confirmation. |
+| Temporary context | If enabled, stored in sessionStorage and expires after one hour. |
+| Image text recognition | Runs in the browser. Tesseract.js may download language data when first needed; image bytes are not sent to the AWAZ backend. |
+| Speech recognition | Runs through the browser's speech service. Browser vendors may process microphone audio under their own policies. |
+| Meeting audio and video | Sent between participants using peer-to-peer WebRTC. STUN and optional TURN servers help establish the connection. |
+| Meeting transcripts | Recognized by the browser and relayed as text through the backend while the room is active. AWAZ does not persist meeting transcripts. |
+| Provider requests | Text sent for translation is sent from the backend to the selected translation provider. Provider credentials stay on the backend. |
+| Optional cloud history | The backend can save records to MongoDB only when a request explicitly opts in. A browser ID is a data partition key, not authentication. |
+
+The app has no user accounts. Do not treat room codes or browser IDs as identity verification.
+
+## Run AWAZ locally
+
+Install **Node.js 20.19 or later** and npm. Install the frontend and backend dependencies separately.
+
+### 1. Configure and start the backend
+
+In PowerShell:
 
 ```powershell
 cd awaz-backend
@@ -66,7 +198,11 @@ npm ci
 npm run dev
 ```
 
-In a second terminal, start the frontend:
+Edit `awaz-backend/.env` to select a translation provider and add any required credentials. The backend listens on `http://localhost:3000` by default. MongoDB is optional for normal local translation and local history.
+
+### 2. Start the frontend
+
+Open a second PowerShell terminal:
 
 ```powershell
 cd Awaz-frontend
@@ -74,54 +210,125 @@ npm ci
 npm run dev
 ```
 
-Open the Vite URL, normally `http://localhost:5173`. The development server proxies API and meeting WebSocket requests to `http://localhost:3000`. Browser history works without MongoDB. Meetings need microphone permission; deployed sites must use HTTPS and support WebSockets.
+Open the Vite URL shown in the terminal, normally **http://localhost:5173**. The development server proxies the main API and meeting WebSocket requests to the backend.
 
-The sample CORS origins in `awaz-backend/.env.example` allow local Vite and the local backend. For another frontend origin, set `ALLOWED_ORIGINS` to a comma separated list of exact origins.
+For optional `/ai/*` routes in Vite development, set `VITE_API_BASE_URL=http://localhost:3000` in `Awaz-frontend/.env.local`, then restart Vite. The backend CORS setting must allow `http://localhost:5173`.
 
-## Environment variables
+To stop either server, press `Ctrl+C` in its terminal.
 
-Copy `awaz-backend/.env.example` to `.env`. The main settings are:
+## Configuration
+
+The main backend settings are in `awaz-backend/.env.example`.
 
 | Variable | Purpose |
 | --- | --- |
-| `PORT` | Backend port; defaults to `3000`. |
-| `MONGO_URI` | Optional MongoDB connection for legacy cloud-history API requests. Local history does not use it. |
-| `ALLOWED_ORIGINS` | Exact allowed frontend origins, comma separated. |
-| `TRANSLATE_ENGINE` | Default adapter: `freegoogle`, `libretranslate`, `google`, `deepl` or `openai`. |
-| `TRANSLATE_FALLBACKS` | Comma separated fallback adapters; sample uses `freegoogle,libretranslate`. |
-| `LIBRETRANSLATE_URL`, `LIBRETRANSLATE_APIKEY` | LibreTranslate endpoint and API key; the default public endpoint requires a key. |
-| `GOOGLE_TRANSLATE_API_KEY`, `DEEPL_API_KEY`, `DEEPL_API_URL` | Optional provider credentials. |
-| `OPENAI_API_KEY`, `OPENAI_MODEL` | Required when using OpenAI for contextual translation. |
-| `OPENAI_ANALYSIS_MODEL` | Optional model for translation review and mixed-language analysis; defaults to `OPENAI_MODEL` or `gpt-4o-mini`. |
-| `OPENAI_TRANSCRIBE_MODEL` | Optional audio transcription model; defaults to `gpt-4o-transcribe-diarize`. |
-| `OPENAI_SPEECH_MODEL` | Optional generated speech model; defaults to `gpt-4o-mini-tts`. |
-| `AI_REQUEST_TIMEOUT_MS`, `AI_AUDIO_MAX_BYTES` | AI provider timeout and maximum transcription upload; defaults are 45 seconds and 20 MiB. Voice consent/sample uploads are capped at 10 MiB. |
-| `RATE_LIMIT_MAX`, `REQUEST_TIMEOUT_MS`, `LOG_LEVEL` | Request limits, provider timeout and log verbosity. |
+| `PORT` | Backend port. Defaults to `3000`. |
+| `ALLOWED_ORIGINS` | Comma-separated frontend origins allowed by CORS. Set exact production origins when deploying. |
+| `TRANSLATE_ENGINE` | Default provider: `freegoogle`, `libretranslate`, `google`, `deepl`, or `openai`. |
+| `TRANSLATE_FALLBACKS` | Ordered provider fallback list. |
+| `LIBRETRANSLATE_URL`, `LIBRETRANSLATE_APIKEY` | LibreTranslate endpoint and optional/required key, depending on the service. |
+| `GOOGLE_TRANSLATE_API_KEY` | Google Cloud Translation credential. |
+| `DEEPL_API_KEY`, `DEEPL_API_URL` | DeepL credential and API endpoint. |
+| `OPENAI_API_KEY`, `OPENAI_MODEL` | Optional OpenAI-backed translation and AI features. |
+| `OPENAI_ANALYSIS_MODEL` | Model for optional translation analysis; defaults to the configured OpenAI model. |
+| `OPENAI_TRANSCRIBE_MODEL`, `OPENAI_SPEECH_MODEL` | Models for optional audio transcription and speech generation routes. |
+| `MONGO_URI` | Optional MongoDB connection for cloud-history API requests. |
+| `TURN_SERVER_URLS`, `TURN_SHARED_SECRET` | Optional coturn REST configuration for meetings across restrictive networks. Keep the shared secret on the backend. |
+| `RATE_LIMIT_MAX`, `REQUEST_TIMEOUT_MS`, `LOG_LEVEL` | General API rate limit, provider timeout, and log verbosity. |
 
-Do not put provider keys in `Awaz-frontend` or a `VITE_` variable. The default `freegoogle` adapter uses an undocumented public endpoint and has no availability guarantee. For a deployed service, configure a provider you control and set a fallback appropriate to its supported languages.
+Never put provider secrets in frontend code or variables prefixed with `VITE_`. The default FreeGoogle adapter uses an undocumented public endpoint and has no availability guarantee. Configure a provider you control for a deployed app. Some providers require credentials even when a fallback is configured.
 
-The frontend uses the same origin by default in production. For a separately hosted backend, set the build variable `VITE_API_BASE_URL` to the backend origin and add the deployed frontend origin to `ALLOWED_ORIGINS`.
+## API overview
 
-## Checks
+| Method and path | Purpose |
+| --- | --- |
+| `GET /health` | Backend status, configured engine, and database availability. |
+| `GET /languages` | Supported UI language catalog. |
+| `POST /translate` | Translate text for a source and target language. |
+| `GET /meeting/ice` | Return WebRTC ICE server settings. |
+| `WS /ws` | Meeting room membership, WebRTC signaling, and transcript relay. |
+| `/ai/*` | Optional review, code-switch, transcription, speech, and consent routes. |
+| `GET/DELETE /history` | Optional MongoDB-backed cloud history API. |
+
+For request schemas, validation limits, and error responses, see [API_DOCUMENTATION.md](API_DOCUMENTATION.md).
+
+## Build, checks, and deployment
+
+### Frontend
 
 ```powershell
-# Frontend
 cd Awaz-frontend
 npm run build
 npm run lint
 npm test
+```
 
-# Backend
-cd ..\awaz-backend
+### Backend
+
+```powershell
+cd awaz-backend
 npm run check
 ```
 
-The tests cover language catalog integrity, core translation API behavior and the optional AI review, mixed-language, transcription, speech and voice-consent routes. Browser microphone, camera, OCR, accessibility and live paid-provider behavior still need manual checks on the target browsers and deployment.
+The frontend build is written to `Awaz-frontend/dist`. The backend's `npm start` serves that build when it exists:
 
-## Deployment
+```powershell
+cd Awaz-frontend
+npm run build
+cd ..\awaz-backend
+npm start
+```
 
-For a single service, build the frontend with `npm run build` in `Awaz-frontend`, then run `npm start` in `awaz-backend`; Express serves `Awaz-frontend/dist`. For separate hosting, serve the frontend as static assets and configure `VITE_API_BASE_URL` at build time. Configure the backend environment, provider credentials and exact CORS origins. Remote meetings need HTTPS and WebSocket support. For restrictive networks, configure coturn REST shared-secret mode and set backend-only `TURN_SERVER_URLS` and `TURN_SHARED_SECRET`; the backend issues short-lived credentials from `GET /meeting/ice`. GitHub Pages builds only the frontend; it needs the repository variable `VITE_API_BASE_URL` to point at a deployed backend.
+For separate frontend and backend hosting, build the frontend with `VITE_API_BASE_URL` set to the deployed backend origin, then configure that exact frontend origin in backend `ALLOWED_ORIGINS`. Deployed meetings require HTTPS and WebSocket support; a TURN relay may be needed on restrictive networks. The repository also includes a GitHub Pages workflow for the frontend, which still needs a separately deployed backend URL.
 
-See [DEPLOYMENT.md](DEPLOYMENT.md). No free-tier provider or hosting plan is guaranteed to remain free.
-#   A w a z - A p p  
- 
+## Project structure
+
+```text
+Awaz-app-main/
+├── Awaz-frontend/
+│   ├── src/
+│   │   ├── components/       Shared layout, navigation, and translation panels
+│   │   ├── data/             Language catalog and UI data
+│   │   ├── hooks/            Speech and settings hooks
+│   │   ├── lib/              API client, glossary, and browser storage
+│   │   └── pages/            Translate, Live, Vision, Speak, Meetings,
+│   │                         History, Insights, and Settings
+│   ├── tests/                Frontend unit tests
+│   └── vite.config.js        Dev server and backend proxy
+├── awaz-backend/
+│   ├── server/
+│   │   ├── config/           Environment and database configuration
+│   │   ├── middleware/       Security, request logging, and error handling
+│   │   ├── models/           Optional MongoDB translation model
+│   │   ├── routes/           REST API routes
+│   │   ├── services/         Provider adapters and WebSocket meeting logic
+│   │   └── server.js         Express and WebSocket entry point
+│   └── tests/                Backend tests
+├── .github/workflows/        GitHub Pages deployment workflow
+├── ARCHITECTURE.md
+├── API_DOCUMENTATION.md
+├── DEPLOYMENT.md
+└── README.md
+```
+
+## Known limits
+
+- Speech recognition availability and quality depend on the browser and often require internet access.
+- Translation provider language support, pricing, and availability vary. Translation is not guaranteed to be correct.
+- Live conversations and meetings are turn based. AWAZ does not provide simultaneous human-like interpretation.
+- Meeting rooms do not authenticate users; anyone with the room code may be able to join while the room is active.
+- WebRTC may need a configured TURN server for some networks.
+- Speaking practice compares text transcriptions; it does not evaluate pronunciation.
+- OCR readability confidence is not translation confidence.
+- AWAZ does not include offline machine translation or downloadable speech packs.
+
+## More documentation
+
+- [Architecture and data flow](ARCHITECTURE.md)
+- [API reference](API_DOCUMENTATION.md)
+- [Development guide](DEVELOPMENT_GUIDE.md)
+- [Deployment guide](DEPLOYMENT.md)
+- [AI engine and optional AI features](AI_ENGINE.md)
+- [Privacy notes](PRIVACY.md)
+- [Feature integration plan](AI_FEATURE_INTEGRATION_PLAN.md)
+- [Roadmap](ROADMAP.md)
